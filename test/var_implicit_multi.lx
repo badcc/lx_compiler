@@ -1,0 +1,6 @@
+# Whitespace doesn't matter
+hello:=4
+world:=10
+test:=world hello -
+res:=test 2 -
+print(res)
