@@ -2,8 +2,10 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <ab.h>
+#include <math.h>
 #include "color.h"
 
+static char LITERAL_DEFAULT_FILE_NAME[] = "test/var_implicit_multi.lx";
 static char LITERAL_PRINT[] = "print";
 
 static char* ReadEntireFile(const char* FileName)
@@ -53,7 +55,10 @@ enum operator_type {
 	Operator_Add,
 	Operator_Sub,
 	Operator_Mul,
-	Operator_Div
+	Operator_Div,
+	Operator_Pow,
+	Operator_LSh,
+	Operator_RSh
 };
 struct cursor {
 	char *At;
@@ -151,8 +156,6 @@ bool TokenEquals(token Token, char *Match) {
             return false;
         }
     }
-    // printf("\n");
-
     // bool Result = (*At == 0);
     // printf("%c\n", *At);
     // return Result;
@@ -175,6 +178,7 @@ struct scope {
 	array* Variables;
 	// scope* Scopes;
 };
+// Use hash table?
 var* GetVarByName(scope* Scope, char* Name) {
 	for (int i = 0; i < Scope->Variables->size; i++) {
 		var* Var = (var*) array_get(Scope->Variables, i);
@@ -195,6 +199,7 @@ void CarryOperation(operation* Op) {
 		case Operator_Sub: Op->Dest->v_Number = ValueA - ValueB; break;
 		case Operator_Mul: Op->Dest->v_Number = ValueA * ValueB; break;
 		case Operator_Div: Op->Dest->v_Number = ValueA / ValueB; break;
+		case Operator_Pow: Op->Dest->v_Number = pow(ValueA, ValueB); break;
 		}
 	}
 }
@@ -204,22 +209,25 @@ var* ParseExpression(scope* Scope, cursor* Cursor) {
 	for (;;) {
 		token Token = GetToken(Cursor);
 		var* Var = (var*) malloc(sizeof(var));
-		if (Token.Type == Token_Number) {
+		if (Token.Type == Token_EndOfStream) {
+			array_destroy(Stack);
+			return NULL;
+		} if (Token.Type == Token_Number) {
 			Var->v_Number = atof(Token.Text);
-			// printf("%f\n", Var->v_Number);
 		} else if (Token.Type == Token_Identifier) {
-			// printf("Token %.*s\n", Token.TextLength, Token.Text);
 			var* PreviousVariable = GetVarByName(Scope, Token.Text);
-			// printf("%d\n", PreviousVariable != NULL);
-			if (PreviousVariable) {
-				// printf("yep\n");
+			token Declaration = GetToken(Cursor);
+			bool NewDeclaration = *Declaration.Text == ':' || *Declaration.Text == '=';
+			BackToken(Cursor, Declaration);
+			if (PreviousVariable && !NewDeclaration) { // Copy value from variable to stack.
 				Var->v_Number = PreviousVariable->v_Number;
 			} else {
-				// printf("Back\n");
 				BackToken(Cursor, Token);
-				return (var*) array_remove_last(Stack);
+				var *Result = (var*) array_remove_last(Stack);
+				array_destroy(Stack);
+				return Result;
 			}
-		} else if (*Token.Text == '+' || *Token.Text == '-' || *Token.Text == '*' || *Token.Text == '/') {
+		} else if (*Token.Text == '+' || *Token.Text == '-' || *Token.Text == '*' || *Token.Text == '/' || *Token.Text == '^') {
 			assert(Stack->size >= 2);
 			var* Stack1 = (var*) array_remove_last(Stack);
 			var* Stack2 = (var*) array_remove_last(Stack);
@@ -233,52 +241,43 @@ var* ParseExpression(scope* Scope, cursor* Cursor) {
 			case '-': Op.Type = Operator_Sub; break;
 			case '*': Op.Type = Operator_Mul; break;
 			case '/': Op.Type = Operator_Div; break;
+			case '^': Op.Type = Operator_Pow; break;
 			}
 			CarryOperation(&Op);
-			// printf("%f %f\n", Stack1->v_Number, Stack2->v_Number);
-			// Var->v_Number = Stack1->v_Number + Stack2->v_Number;
 		} else {
-			printf(KRED "Syntax error" KNRM ": Unexpected identifier %.*s\n", Token.TextLength, Token.Text);
+			array_destroy(Stack);
+			printf(KRED "Syntax error" KNRM ": Unexpected identifier %d: %.*s\n", Token.Type, Token.TextLength, Token.Text);
 			exit(0);
 		}
 		array_add(Stack, (void*) Var);
-		// if (Token.Type == Token_Number) return Var;
 	}
 }
 bool ParseVariable(scope* Scope, cursor* Cursor, token Name) {
-	if (!RequireToken(Cursor, Token_Colon)) return false;
+	token Declaration = GetToken(Cursor);
+	var* Var;
+	// Assign
+	if (Declaration.Type == Token_Colon) {
+		Var = (var*) malloc(sizeof(var));
+	} else { // Reassign
+		BackToken(Cursor, Declaration);
+		Var = GetVarByName(Scope, Name.Text);
+		if (!Var) return false;
+	}
 	token Equals = GetToken(Cursor);
 	if (*Equals.Text != '=') return false;
-	var* Var = (var*) malloc(sizeof(var));
 	Var->Identifier = Name;
 	var* Result = ParseExpression(Scope, Cursor);
-	Var->v_Number = Result->v_Number;
-	// printf("%f\n", Result->v_Number);
+	if (Result) {
+		Var->v_Number = Result->v_Number;
+	}
 	array_add(Scope->Variables, Var);
-	// if (Value.Type == Token_Number) {
-	// 	Var->v_Number = atof(Value.Text);
-	// 	// printf("%.*s\n", Value.TextLength, Value.Text);
-	// } else if (Value.Type == Token_Identifier) {
-	// 	token NextValue = GetToken(Cursor);
-	// 	token OperationToken = GetToken(Cursor);
-	// 	operation Operation = {};
-	// 	if (*OperationToken.Text == '+')
-	// 		Operation.Type = Operator_Add;
-	// 	// printf("%.*s\n", Value.TextLength, Value.Text);
-	// 	// printf("%.*s\n", NextValue.TextLength, NextValue.Text);
-	// 	Operation.A = GetVarByName(Scope, Value.Text);
-	// 	Operation.B = GetVarByName(Scope, NextValue.Text);
-	// 	Var->v_Number = Operation.A->v_Number + Operation.B->v_Number;
-	// } else {
-	// 	free(Var);
-	// 	return false;
-	// }
 	return true;
 }
 int main(int argc, char** argv) {
 	setvbuf(stdout, NULL, _IONBF, 0);
 
-	char* Source = ReadEntireFile("test/var_implicit_multi.lx");
+	char* FileName = argc == 1 ? LITERAL_DEFAULT_FILE_NAME : *(argv + 1);
+	char* Source = ReadEntireFile(FileName);
 	cursor Cursor = {};
 	Cursor.At = Source;
 
@@ -304,7 +303,6 @@ int main(int argc, char** argv) {
 				ParseVariable(&Scope, &Cursor, Token);
 			}
 		}
-		// printf("%d: %.*s\n", Token.Type, Token.TextLength, Token.Text);
 	}
 
 	return 0;

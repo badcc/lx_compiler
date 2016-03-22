@@ -1,6 +1,6 @@
 # Whitespace doesn't matter
-hello:=4
-world:=10
-test:=world hello -
-res:=test 2 -
+hello:=4 
+world:=3
+hello=2
+res:=hello world ^
 print(res)
